@@ -1,0 +1,30 @@
+sequenceDiagram
+    participant Client
+    participant Server
+    participant Validation
+    participant Memory
+    participant FileSystem
+    
+    Client->>Server: POST /api/reminders
+    Note over Server: Log: "POST /api/reminders - Creating new reminder"
+    Server->>Validation: Check if title exists
+    
+    alt Title Missing
+        Validation-->>Server: Validation Failed
+        Server-->>Client: 400 Bad Request<br/>{"success": false, "error": "Title is required"}
+    else Title Exists
+        Validation-->>Server: Validation Passed
+        Server->>Server: Generate UUID
+        Server->>Server: Create Reminder Object<br/>{id, title, description, dueDate,<br/>priority, completed, timestamps}
+        Server->>Memory: Add reminder to array
+        Server->>FileSystem: Write to reminders.json
+        
+        alt Save Successful
+            FileSystem-->>Server: File saved
+            Server-->>Client: 201 Created<br/>{"success": true, "data": {reminder}}
+        else Save Failed
+            FileSystem-->>Server: Error
+            Server->>Memory: Remove reminder from array
+            Server-->>Client: 500 Internal Server Error<br/>{"success": false, "error": "Failed to save reminder"}
+        end
+    end
