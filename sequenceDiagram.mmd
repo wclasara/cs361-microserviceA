@@ -1,30 +1,110 @@
 sequenceDiagram
-    participant Client
-    participant Server
-    participant Validation
-    participant Memory
-    participant FileSystem
+    participant Client as Client Application
+    participant API as Reminder API<br/>(Port 3001)
+    participant Validation as Request Validation
+    participant Storage as In-Memory Storage
+    participant File as reminders.json
+
+    Note over Client,File: Example 1: Creating a New Reminder (POST)
     
-    Client->>Server: POST /api/reminders
-    Note over Server: Log: "POST /api/reminders - Creating new reminder"
-    Server->>Validation: Check if title exists
+    Client->>API: POST /api/reminders<br/>Headers: Content-Type: application/json<br/>Body: {title, description, dueDate, priority}
+    API->>API: Log request with timestamp
+    API->>Validation: Validate request body
     
-    alt Title Missing
-        Validation-->>Server: Validation Failed
-        Server-->>Client: 400 Bad Request<br/>{"success": false, "error": "Title is required"}
-    else Title Exists
-        Validation-->>Server: Validation Passed
-        Server->>Server: Generate UUID
-        Server->>Server: Create Reminder Object<br/>{id, title, description, dueDate,<br/>priority, completed, timestamps}
-        Server->>Memory: Add reminder to array
-        Server->>FileSystem: Write to reminders.json
+    alt Title is missing
+        Validation-->>API: Validation failed
+        API-->>Client: HTTP 400 Bad Request<br/>{success: false, error: "Title is required"}
+    else Title exists
+        Validation-->>API: Validation passed
+        API->>API: Generate UUID for reminder
+        API->>API: Create reminder object with:<br/>- id (UUID)<br/>- title, description<br/>- dueDate, priority<br/>- completed: false<br/>- timestamps
+        API->>Storage: Push reminder to array
+        API->>File: Write updated array to disk
         
-        alt Save Successful
-            FileSystem-->>Server: File saved
-            Server-->>Client: 201 Created<br/>{"success": true, "data": {reminder}}
-        else Save Failed
-            FileSystem-->>Server: Error
-            Server->>Memory: Remove reminder from array
-            Server-->>Client: 500 Internal Server Error<br/>{"success": false, "error": "Failed to save reminder"}
+        alt Save successful
+            File-->>API: Write successful
+            API-->>Client: HTTP 201 Created<br/>{success: true, data: {reminder object}}
+        else Save failed
+            File-->>API: Write error
+            API->>Storage: Remove reminder from array
+            API-->>Client: HTTP 500 Internal Server Error<br/>{success: false, error: "Failed to save reminder"}
         end
     end
+
+    Note over Client,File: Example 2: Retrieving All Reminders (GET)
+    
+    Client->>API: GET /api/reminders<br/>Headers: Content-Type: application/json
+    API->>API: Log request with timestamp
+    API->>Storage: Read reminders array
+    Storage-->>API: Return array of reminders
+    API-->>Client: HTTP 200 OK<br/>{success: true, data: [array of reminders]}
+
+    Note over Client,File: Example 3: Getting a Specific Reminder (GET)
+    
+    Client->>API: GET /api/reminders/:id<br/>Headers: Content-Type: application/json
+    API->>API: Log request with timestamp
+    API->>Storage: Find reminder by ID
+    
+    alt Reminder found
+        Storage-->>API: Return reminder object
+        API-->>Client: HTTP 200 OK<br/>{success: true, data: {reminder object}}
+    else Reminder not found
+        Storage-->>API: null
+        API-->>Client: HTTP 404 Not Found<br/>{success: false, error: "Reminder not found"}
+    end
+
+    Note over Client,File: Example 4: Updating a Reminder (PUT)
+    
+    Client->>API: PUT /api/reminders/:id<br/>Headers: Content-Type: application/json<br/>Body: {updated fields}
+    API->>API: Log request with timestamp
+    API->>Storage: Find reminder by ID
+    
+    alt Reminder not found
+        Storage-->>API: Index = -1
+        API-->>Client: HTTP 404 Not Found<br/>{success: false, error: "Reminder not found"}
+    else Reminder found
+        Storage-->>API: Index found
+        API->>API: Merge updated fields<br/>Update timestamp
+        API->>Storage: Update reminder at index
+        API->>File: Write updated array to disk
+        
+        alt Save successful
+            File-->>API: Write successful
+            API-->>Client: HTTP 200 OK<br/>{success: true, data: {updated reminder}}
+        else Save failed
+            File-->>API: Write error
+            API-->>Client: HTTP 500 Internal Server Error<br/>{success: false, error: "Failed to save changes"}
+        end
+    end
+
+    Note over Client,File: Example 5: Marking Complete (PATCH)
+    
+    Client->>API: PATCH /api/reminders/:id/complete<br/>Headers: Content-Type: application/json
+    API->>API: Log request with timestamp
+    API->>Storage: Find reminder by ID
+    
+    alt Reminder found
+        Storage-->>API: Index found
+        API->>API: Set completed = true<br/>Update timestamp
+        API->>Storage: Update reminder at index
+        API->>File: Write updated array to disk
+        File-->>API: Write successful
+        API-->>Client: HTTP 200 OK<br/>{success: true, data: {completed reminder}}
+    else Reminder not found
+        Storage-->>API: Index = -1
+        API-->>Client: HTTP 404 Not Found<br/>{success: false, error: "Reminder not found"}
+    end
+
+    Note over Client,File: Server Startup & Data Persistence
+    
+    activate API
+    API->>File: Load reminders from disk
+    alt File exists
+        File-->>API: JSON data
+        API->>Storage: Parse and store in memory
+    else File doesn't exist
+        API->>File: Create empty reminders.json
+        API->>Storage: Initialize empty array
+    end
+    Note over API: Server ready on port 3001
+    deactivate API
